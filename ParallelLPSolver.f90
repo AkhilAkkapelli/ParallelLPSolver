@@ -3,9 +3,9 @@ use mpi
 use mkl_vsl
 implicit none
 
-integer, parameter :: m  = 2**8, n = 2**9
-integer, parameter :: mb = 2**5, nb = 2**6
-integer :: nprow = 3, npcol = 4
+integer, parameter :: m  = 16, n = 16
+integer, parameter :: mb = 2, nb = 2
+integer :: nprow = 2, npcol = 2
 
 integer, parameter :: iterlimit = 100
 
@@ -14,12 +14,13 @@ character(len=8), dimension(4), parameter :: colors = [ char(27)//"[31m", char(2
 integer, external :: numroc
 integer, external :: indxl2g, indxg2l
 
+integer :: rank, nprocs
+
 contains
 
-  subroutine init_mpi_blacs(myrow, mycol, rank, nprocs, ictxt)
+  subroutine init_mpi_blacs(myrow, mycol, ictxt)
 
     integer, intent(out) :: myrow, mycol
-    integer, intent(out) :: rank, nprocs
     integer, intent(out) :: ictxt
 
     integer :: info
@@ -75,10 +76,9 @@ contains
 
   end subroutine init_lp
 
-  subroutine print_desc(desc, name, rank)
+  subroutine print_desc(desc, name)
     integer, intent(in) :: desc(9)
     character(len=*), intent(in) :: name
-    integer, intent(in) :: rank
 
     if (rank == 0) then
       print ('(A)'), '==========================================='
@@ -93,7 +93,7 @@ contains
 
   end subroutine print_desc
 
-  subroutine gen_data(A, x0, b, c, descA, descx0, descb, mloc, nloc, myrow, mycol, rank, ictxt)
+  subroutine gen_data(A, x0, b, c, descA, descx0, descb, mloc, nloc, myrow, mycol, ictxt)
 
     real(8), intent(inout) :: A(:,:), x0(:,:), b(:,:), c(:,:)
 
@@ -101,12 +101,14 @@ contains
     
     integer, intent(in) :: mloc, nloc
     integer, intent(in) :: myrow, mycol
-    integer, intent(in) :: rank
     integer, intent(in) :: ictxt
 
     integer :: vsl_seed
     integer :: vsl_status
     type(VSL_STREAM_STATE) :: stream
+
+    integer :: info
+    integer :: p, i, j
 
     vsl_seed   = 12345 + rank * 10
     vsl_status = vslnewstream(stream, VSL_BRNG_MT19937, vsl_seed)
@@ -180,12 +182,11 @@ contains
 
   end subroutine gen_data
 
-  subroutine write_files(A, x0, b, c, mloc, nloc, myrow, mycol, rank)
+  subroutine write_files(A, x0, b, c, mloc, nloc, myrow, mycol)
 
     real(8), intent(in) :: A(:,:), x0(:,:), b(:,:), c(:,:)
     integer, intent(in) :: mloc, nloc
     integer, intent(in) :: myrow, mycol
-    integer, intent(in) :: rank
 
     integer :: info
     integer :: fh
@@ -315,7 +316,7 @@ contains
     integer, intent(in) :: ictxt
 
     integer :: info
-    integer :: i, j, ig, jg
+    integer :: p, i, j, ig, jg
     real(8) :: ccan_lmax, ccan_gmax
 
     ncanloc = numroc(n+1, nb, mycol, 0, npcol)
@@ -380,7 +381,7 @@ contains
 
   end subroutine projective_transform
 
-  subroutine inverse_projective_transform(xopt, xoptcan, c, descc, x0, nloc, ncanloc, myrow, mycol, rank, nprocs, ictxt)
+  subroutine inverse_projective_transform(xopt, xoptcan, c, descc, x0, nloc, ncanloc, myrow, mycol, ictxt)
 
     real(8), allocatable, intent(out) :: xopt(:,:)
     real(8), intent(in) :: xoptcan(:,:), x0(:,:)
@@ -388,8 +389,6 @@ contains
     integer, intent(in) :: descc(9)
     integer, intent(in) :: nloc, ncanloc
     integer, intent(in) :: myrow, mycol
-    integer, intent(in) :: rank
-    integer, intent(in) :: nprocs
     integer, intent(in) :: ictxt
 
     integer :: info
@@ -435,6 +434,8 @@ contains
 
       end if
     end do    
+
+    call MPI_Barrier(MPI_COMM_WORLD, info)
 
     if(myrow == 0 .and. mycol == 0) print*, "Optimum Objective value: ", dotx
 
@@ -596,7 +597,6 @@ program projective_scaling_algo
     use projective_scaling_mod
     implicit none
 
-    integer :: rank, nprocs
     integer :: ictxt, myrow, mycol
     integer :: mloc, nloc
     integer :: ncanloc
@@ -611,7 +611,7 @@ program projective_scaling_algo
 
     real(8) :: t0, t1
     
-    call init_mpi_blacs(myrow, mycol, rank, nprocs, ictxt)
+    call init_mpi_blacs(myrow, mycol, ictxt)
 
     call MPI_Barrier(MPI_COMM_WORLD, info)
 
@@ -619,11 +619,11 @@ program projective_scaling_algo
 
     call MPI_Barrier(MPI_COMM_WORLD, info)
 
-    call gen_data(A, x0, b, c, descA, descx0, descb, mloc, nloc, myrow, mycol, rank, ictxt)
+    call gen_data(A, x0, b, c, descA, descx0, descb, mloc, nloc, myrow, mycol, ictxt)
 
     call MPI_Barrier(MPI_COMM_WORLD, info)
 
-    call write_files(A, x0, b, c, mloc, nloc, myrow, mycol, rank)
+    call write_files(A, x0, b, c, mloc, nloc, myrow, mycol)
 
     call MPI_Barrier(MPI_COMM_WORLD, info)
 
@@ -637,7 +637,7 @@ program projective_scaling_algo
 
     call MPI_Barrier(MPI_COMM_WORLD, info)
 
-    call inverse_projective_transform(xopt, xoptcan, c, descc, x0, nloc, ncanloc, myrow, mycol, rank, nprocs, ictxt)
+    call inverse_projective_transform(xopt, xoptcan, c, descc, x0, nloc, ncanloc, myrow, mycol, ictxt)
 
     call MPI_Barrier(MPI_COMM_WORLD, info)
     
